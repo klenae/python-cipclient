@@ -117,7 +117,7 @@ class EventThread(threading.Thread):
         while not self._stopEvent.is_set():
             if not self.cip.event_queue.empty():
                 direction, sigType, join, value = self.cip.event_queue.get()
-                with self.cip.txLock:
+                with self.cip.joinLock:
                     try:
                         self.cip.join[direction][sigType][join][0] = value
                         for callback in self.cip.join[direction][sigType][join][1:]:
@@ -233,7 +233,6 @@ class CIPSocketClient:
         self.restartLock = threading.Lock()
         self.restartConnection = False
 
-        self.txLock = threading.Lock()
         self.sendThread = SendThread(self)
         self.receiveThread = ReceiveThread(self)
         self.eventThread = EventThread(self)
@@ -242,6 +241,7 @@ class CIPSocketClient:
         self.tx_queue = queue.Queue()
         self.event_queue = queue.Queue()
 
+        self.joinLock = threading.Lock()
         self.join = {
             "in": {"d": {}, "a": {}, "s": {}},
             "out": {"d": {}, "a": {}, "s": {}},
@@ -284,7 +284,7 @@ class CIPSocketClient:
         if (sigType != "d") and (sigType != "a") and (sigType != "s"):
             raise ValueError(f"get(): '{sigType}' is not a valid signal type")
 
-        with self.txLock:
+        with self.joinLock:
             try:
                 value = self.join[direction][sigType][join][0]
             except KeyError:
@@ -302,7 +302,7 @@ class CIPSocketClient:
         if (sigType != "d") and (sigType != "a") and (sigType != "s"):
             raise ValueError(f"subscribe(): '{sigType}' is not a valid signal type")
 
-        with self.txLock:
+        with self.joinLock:
             if join not in self.join[direction][sigType]:
                 if sigType == "s":
                     value = ""
