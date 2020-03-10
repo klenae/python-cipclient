@@ -156,6 +156,8 @@ class ConnectionThread(threading.Thread):
     def run(self):
         _logger.debug("started")
 
+        warningPosted = False
+
         while not self._stopEvent.is_set():
 
             try:
@@ -164,10 +166,16 @@ class ConnectionThread(threading.Thread):
                 self.cip.socket.connect((self.cip.host, self.cip.port))
             except socket.error:
                 self.cip.socket.close()
-                _logger.error(f"cannot connect to host {self.cip.host}:{self.cip.port}")
+                if warningPosted is False:
+                    _logger.debug(
+                        f"attempting to connect to {self.cip.host}:{self.cip.port}, "
+                        "no success yet"
+                    )
+                    warningPosted = True
                 if not self._stopEvent.is_set():
-                    time.sleep(5)
+                    time.sleep(1)
             else:
+                warningPosted = False
                 _logger.debug(f"connected to host {self.cip.host}:{self.cip.port}")
                 self.cip.eventThread.start()
                 self.cip.sendThread.start()
