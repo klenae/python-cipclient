@@ -30,13 +30,18 @@ class SendThread(threading.Thread):
         while not self._stopEvent.is_set():
             while not self.cip.tx_queue.empty():
                 tx = self.cip.tx_queue.get()
-                _logger.debug(f"TX: <{str(binascii.hexlify(tx), 'ascii')}>")
-                self.cip.socket.sendall(tx)
-                timeSlept = 0
+                if self.cip.restartConnection is False:
+                    _logger.debug(f"TX: <{str(binascii.hexlify(tx), 'ascii')}>")
+                    try:
+                        self.cip.socket.sendall(tx)
+                    except socket.error:
+                        with self.cip.restartLock:
+                            self.cip.restartConnection = True
+                    timeSlept = 0
 
             time.sleep(0.01)
 
-            if self.cip.connected:
+            if self.cip.connected is True and self.cip.restartConnection is False:
                 timeSlept += 0.01
                 if timeSlept >= 15:
                     self.cip.tx_queue.put(b"\x0D\x00\x02\x00\x00")
@@ -61,34 +66,37 @@ class ReceiveThread(threading.Thread):
 
         while not self._stopEvent.is_set():
             try:
-                rx = self.cip.socket.recv(4096)
-                _logger.debug(f'RX: <{str(binascii.hexlify(rx), "ascii")}>')
+                if self.cip.restartConnection is False:
+                    rx = self.cip.socket.recv(4096)
+                    _logger.debug(f'RX: <{str(binascii.hexlify(rx), "ascii")}>')
 
-                position = 0
-                length = len(rx)
+                    position = 0
+                    length = len(rx)
 
-                while position < length:
-                    if (length - position) < 4:
-                        _logger.warning("Packet is too short")
-                        break
+                    while position < length:
+                        if (length - position) < 4:
+                            _logger.warning("Packet is too short")
+                            break
 
-                    payloadLength = (rx[position + 1] << 8) + rx[position + 2]
-                    packetLength = payloadLength + 3
+                        payloadLength = (rx[position + 1] << 8) + rx[position + 2]
+                        packetLength = payloadLength + 3
 
-                    if (length - position) < packetLength:
-                        _logger.warning("Packet length mismatch")
-                        break
+                        if (length - position) < packetLength:
+                            _logger.warning("Packet length mismatch")
+                            break
 
-                    packetType = rx[position]
-                    payload = rx[position + 3 : position + 3 + payloadLength]
+                        packetType = rx[position]
+                        payload = rx[position + 3 : position + 3 + payloadLength]
 
-                    self.cip.processPayload(packetType, payload)
-                    position += packetLength
+                        self.cip.processPayload(packetType, payload)
+                        position += packetLength
+                else:
+                    time.sleep(0.1)
 
-            except socket.timeout as e:
-                if e.args[0] == "timed out":
-                    pass
-                    # _logger.debug("nothing received")
+            except (socket.error, socket.timeout) as e:
+                if e.args[0] != "timed out":
+                    with self.cip.restartLock:
+                        self.cip.restartConnection = True
 
         _logger.debug("stopped")
 
@@ -136,7 +144,11 @@ class EventThread(threading.Thread):
                         tx[6] = 4 + len(value)
                         tx += bytearray(value, "ascii")
 
-                    self.cip.tx_queue.put(tx)
+                    if (
+                        self.cip.connected is True
+                        and self.cip.restartConnection is False
+                    ):
+                        self.cip.tx_queue.put(tx)
 
             time.sleep(0.001)
 
@@ -176,15 +188,24 @@ class ConnectionThread(threading.Thread):
                     time.sleep(1)
             else:
                 warningPosted = False
-                _logger.debug(f"connected to host {self.cip.host}:{self.cip.port}")
-                self.cip.eventThread.start()
-                self.cip.sendThread.start()
-                self.cip.receiveThread.start()
-                while not self._stopEvent.is_set():
+                _logger.debug(f"connected to {self.cip.host}:{self.cip.port}")
+                if not self.cip.restartConnection:
+                    self.cip.eventThread.start()
+                    self.cip.sendThread.start()
+                    self.cip.receiveThread.start()
+                self.cip.restartConnection = False
+                while (
+                    not self._stopEvent.is_set() and self.cip.restartConnection is False
+                ):
                     time.sleep(1)
-                self.cip.sendThread.join()
-                self.cip.eventThread.join()
-                self.cip.receiveThread.join()
+                if not self._stopEvent.is_set():
+                    self.cip.connected = False
+                    self.cip.socket.close()
+                    _logger.debug(f"lost connection to {self.cip.host}:{self.cip.port}")
+                else:
+                    self.cip.sendThread.join()
+                    self.cip.eventThread.join()
+                    self.cip.receiveThread.join()
 
         self.cip.socket.close()
 
@@ -209,6 +230,8 @@ class CIPSocketClient:
         self.timeout = timeout
         self.socket = None
         self.connected = False
+        self.restartLock = threading.Lock()
+        self.restartConnection = False
 
         self.txLock = threading.Lock()
         self.sendThread = SendThread(self)
