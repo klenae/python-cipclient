@@ -240,7 +240,6 @@ class CIPSocketClient:
         self.connectionThread = ConnectionThread(self)
 
         self.tx_queue = queue.Queue()
-        self.rx_queue = queue.Queue()
         self.event_queue = queue.Queue()
 
         self.join = {
