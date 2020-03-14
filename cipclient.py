@@ -294,6 +294,12 @@ class CIPSocketClient:
                     value = 0
         return value
 
+    def updateRequest(self):
+        if self.connected is True:
+            self.tx_queue.put(b"\x05\x00\x05\x00\x00\x02\x03\x00")
+        else:
+            _logger.debug("updateRequest(): not currently connected")
+
     def subscribe(self, sigType, join, callback, direction="in"):
         if (direction != "in") and (direction != "out"):
             raise ValueError(
