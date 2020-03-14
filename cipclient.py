@@ -352,6 +352,10 @@ class CIPSocketClient:
                     self.tx_queue.put(b"\x05\x00\x05\x00\x00\x02\x03\x1d")
                     self.tx_queue.put(b"\x0D\x00\x02\x00\x00")
                     self.connected = True
+                    with self.joinLock:
+                        for sigType, joins in self.join["out"].items():
+                            for j in joins:
+                                self.set(sigType, j, joins[j][0])
                 elif updateRequestType == 0x1D:
                     # end-of-query acknowledgement
                     _logger.debug("  End-of-query acknowledgement")
