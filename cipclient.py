@@ -172,6 +172,8 @@ class EventThread(threading.Thread):
                     elif sigtype == "s":
                         tx[2] = 8 + len(value)
                         tx[6] = 4 + len(value)
+                        tx += cip_join.to_bytes(2, "big")
+                        tx += b"\x03"
                         tx += bytearray(value, "ascii")
                     if (
                         self.cip.connected is True
@@ -260,7 +262,7 @@ class CIPSocketClient:
         "db": b"\x05\x00\x06\x00\x00\x03\x27",  # button-style digital join
         "dp": b"\x05\x00\x06\x00\x00\x03\x27",  # pulse-style digital join
         "a": b"\x05\x00\x08\x00\x00\x05\x14",  # analog join
-        "s": b"\x12\x00\x00\x00\x00\x00\x00\x34\x00\x00\x03",  # serial join
+        "s": b"\x12\x00\x00\x00\x00\x00\x00\x34",  # serial join
     }
 
     def __init__(self, host, ipid, port=41794, timeout=2):
