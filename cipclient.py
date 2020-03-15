@@ -25,7 +25,8 @@ class SendThread(threading.Thread):
         """Start the CIP outgoing packet processing thread."""
         _logger.debug("started")
 
-        time_asleep = 0
+        time_asleep_heartbeat = 0
+        time_asleep_buttons = 0
 
         while not self._stop_event.is_set():
             while not self.cip.tx_queue.empty():
@@ -37,15 +38,28 @@ class SendThread(threading.Thread):
                     except socket.error:
                         with self.cip.restart_lock:
                             self.cip.restart_connection = True
-                    time_asleep = 0
+                    time_asleep_heartbeat = 0
 
             time.sleep(0.01)
 
             if self.cip.connected is True and self.cip.restart_connection is False:
-                time_asleep += 0.01
-                if time_asleep >= 15:
+                time_asleep_heartbeat += 0.01
+                if time_asleep_heartbeat >= 15:
                     self.cip.tx_queue.put(b"\x0D\x00\x02\x00\x00")
-                    time_asleep = 0
+                    time_asleep_heartbeat = 0
+
+                time_asleep_buttons += 0.01
+                if time_asleep_buttons >= 0.50 and len(self.cip.buttons_pressed):
+                    with self.cip.buttons_lock:
+                        for join in self.cip.buttons_pressed:
+                            try:
+                                if self.cip.join["out"]["d"][join][0] == 1:
+                                    self.cip.tx_queue.put(
+                                        self.cip.buttons_pressed[join]
+                                    )
+                            except KeyError:
+                                pass
+                    time_asleep_buttons = 0
 
         _logger.debug("stopped")
 
@@ -57,7 +71,7 @@ class SendThread(threading.Thread):
 
 class ReceiveThread(threading.Thread):
     """Process incoming CIP packets."""
-    
+
     def __init__(self, cip):
         """Set up the CIP incoming packet processing thread."""
         self._stop_event = threading.Event()
@@ -126,33 +140,39 @@ class EventThread(threading.Thread):
         while not self._stop_event.is_set():
             if not self.cip.event_queue.empty():
                 direction, sigtype, join, value = self.cip.event_queue.get()
+
                 with self.cip.join_lock:
                     try:
-                        self.cip.join[direction][sigtype][join][0] = value
-                        for callback in self.cip.join[direction][sigtype][join][1:]:
+                        self.cip.join[direction][sigtype[0]][join][0] = value
+                        for callback in self.cip.join[direction][sigtype[0]][join][1:]:
                             callback(value)
                     except KeyError:
-                        self.cip.join[direction][sigtype][join] = [
+                        self.cip.join[direction][sigtype[0]][join] = [
                             value,
                         ]
                 _logger.debug(f"  : {sigtype} {direction} {join} = {value}")
 
                 if direction == "out":
                     tx = bytearray(self.cip._cip_packet[sigtype])
-                    join -= 1
-                    if sigtype == "d":
-                        packed_join = (join // 256) + ((join % 256) * 256)
+                    cip_join = join - 1
+                    if sigtype[0] == "d":
+                        packed_join = (cip_join // 256) + ((cip_join % 256) * 256)
                         if value == 0:
                             packed_join |= 0x80
                         tx += packed_join.to_bytes(2, "big")
+                        if sigtype == "db":
+                            with self.cip.buttons_lock:
+                                if value == 1:
+                                    self.cip.buttons_pressed[join] = tx
+                                elif join in self.cip.buttons_pressed:
+                                    self.cip.buttons_pressed.pop(join)
                     elif sigtype == "a":
-                        tx += join.to_bytes(2, "big")
+                        tx += cip_join.to_bytes(2, "big")
                         tx += value.to_bytes(2, "big")
                     elif sigtype == "s":
                         tx[2] = 8 + len(value)
                         tx[6] = 4 + len(value)
                         tx += bytearray(value, "ascii")
-
                     if (
                         self.cip.connected is True
                         and self.cip.restart_connection is False
@@ -171,7 +191,7 @@ class EventThread(threading.Thread):
 
 class ConnectionThread(threading.Thread):
     """Manage the socket connection to the control processor."""
-    
+
     def __init__(self, cip):
         """Set up the socket management thread."""
         self._stop_event = threading.Event()
@@ -209,7 +229,8 @@ class ConnectionThread(threading.Thread):
                     self.cip.receive_thread.start()
                 self.cip.restart_connection = False
                 while (
-                    not self._stop_event.is_set() and self.cip.restart_connection is False
+                    not self._stop_event.is_set()
+                    and self.cip.restart_connection is False
                 ):
                     time.sleep(1)
                 if not self._stop_event.is_set():
@@ -233,11 +254,13 @@ class ConnectionThread(threading.Thread):
 
 class CIPSocketClient:
     """Facilitate communications with a Crestron control processor via CIP."""
-    
+
     _cip_packet = {
-        "d": b"\x05\x00\x06\x00\x00\x03\x00",
-        "a": b"\x05\x00\x08\x00\x00\x05\x14",
-        "s": b"\x12\x00\x00\x00\x00\x00\x00\x34\x00\x00\x03",
+        "d": b"\x05\x00\x06\x00\x00\x03\x00",  # standard digital join
+        "db": b"\x05\x00\x06\x00\x00\x03\x27",  # button-style digital join
+        "dp": b"\x05\x00\x06\x00\x00\x03\x27",  # pulse-style digital join
+        "a": b"\x05\x00\x08\x00\x00\x05\x14",  # analog join
+        "s": b"\x12\x00\x00\x00\x00\x00\x00\x34\x00\x00\x03",  # serial join
     }
 
     def __init__(self, host, ipid, port=41794, timeout=2):
@@ -250,6 +273,8 @@ class CIPSocketClient:
         self.connected = False
         self.restart_lock = threading.Lock()
         self.restart_connection = False
+        self.buttons_pressed = {}
+        self.buttons_lock = threading.Lock()
 
         self.send_thread = SendThread(self)
         self.receive_thread = ReceiveThread(self)
@@ -298,6 +323,19 @@ class CIPSocketClient:
             return
 
         self.event_queue.put(("out", sigtype, join, value))
+
+    def press(self, join):
+        """Set a digital output join to the active state using CIP button logic."""
+        self.event_queue.put(("out", "db", join, 1))
+
+    def release(self, join):
+        """Set a digital output join to the inactive state using CIP button logic."""
+        self.event_queue.put(("out", "db", join, 0))
+
+    def pulse(self, join):
+        """Generate an active-inactive pulse on the specified digital output join."""
+        self.event_queue.put(("out", "dp", join, 1))
+        self.event_queue.put(("out", "dp", join, 0))
 
     def get(self, sigtype, join, direction="in"):
         """Get the current value of a join."""
@@ -399,7 +437,8 @@ class CIPSocketClient:
                 _logger.debug(
                     f"  Received date/time from control processor <"
                     f"{cip_date[2:4]}:{cip_date[4:6]}:"
-                    f"{cip_date[6:8]} {cip_date[8:10]}/{cip_date[10:12]}/20{cip_date[12:]}>"
+                    f"{cip_date[6:8]} {cip_date[8:10]}/"
+                    f"{cip_date[10:12]}/20{cip_date[12:]}>"
                 )
             else:
                 # unexpected data packet
