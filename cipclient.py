@@ -145,7 +145,7 @@ class EventThread(threading.Thread):
                     try:
                         self.cip.join[direction][sigtype[0]][join][0] = value
                         for callback in self.cip.join[direction][sigtype[0]][join][1:]:
-                            callback(value)
+                            callback(sigtype[0], join, value)
                     except KeyError:
                         self.cip.join[direction][sigtype[0]][join] = [
                             value,
