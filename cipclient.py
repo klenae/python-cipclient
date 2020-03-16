@@ -356,12 +356,12 @@ class CIPSocketClient:
                     value = 0
         return value
 
-    def updateRequest(self):
+    def update_request(self):
         """Send an update request to the control processor."""
         if self.connected is True:
             self.tx_queue.put(b"\x05\x00\x05\x00\x00\x02\x03\x00")
         else:
-            _logger.debug("updateRequest(): not currently connected")
+            _logger.debug("update_request(): not currently connected")
 
     def subscribe(self, sigtype, join, callback, direction="in"):
         """Subscribe to join change events by specifying callback functions."""
