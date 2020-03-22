@@ -28,6 +28,7 @@ This module works by connecting to an "XPanel 2.0 Smart Graphics" symbol defined
 Here is a simple example that demonstrates setting and getting join states using this module.
 
 ```python
+import time
 import cipclient
 
 # set up the client to connect to hostname "processor" at IP-ID 0x0A
@@ -35,6 +36,7 @@ cip = cipclient.CIPSocketClient("processor", 0x0A)
 
 # initiate the socket connection and start worker threads
 cip.start()
+time.sleep(1.5)
 
 # you can force this client and the processor to resync using an update request
 cip.update_request()  # note that this also occurs automatically on first connection
