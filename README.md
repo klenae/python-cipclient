@@ -28,8 +28,12 @@ This module works by connecting to an "XPanel 2.0 Smart Graphics" symbol defined
 Here is a simple example that demonstrates setting and getting join states using this module.
 
 ```python
+import logging
 import time
 import cipclient
+
+# uncomment the line below to enable debugging output to console
+# logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] (%(threadName)-10s) %(message)s")
 
 # set up the client to connect to hostname "processor" at IP-ID 0x0A
 cip = cipclient.CIPSocketClient("processor", 0x0A)
