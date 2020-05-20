@@ -8,7 +8,6 @@ import socket
 import threading
 import time
 
-
 _logger = logging.getLogger(__name__)
 
 
@@ -221,7 +220,7 @@ class ConnectionThread(threading.Thread):
                     )
                     warning_posted = True
                 if not self._stop_event.is_set():
-                    time.sleep(1)
+                    time.sleep(10)
             else:
                 warning_posted = False
                 _logger.debug(f"connected to {self.cip.host}:{self.cip.port}")
@@ -239,6 +238,7 @@ class ConnectionThread(threading.Thread):
                     self.cip.connected = False
                     self.cip.socket.close()
                     _logger.debug(f"lost connection to {self.cip.host}:{self.cip.port}")
+                    time.sleep(10)
                 else:
                     self.cip.send_thread.join()
                     self.cip.event_thread.join()
@@ -389,6 +389,7 @@ class CIPSocketClient:
             f'> Type 0x{ciptype:02x} <{str(binascii.hexlify(payload), "ascii")}>'
         )
         length = len(payload)
+        restartRequired = False
 
         if ciptype == 0x0D or ciptype == 0x0E:
             # heartbeat
@@ -465,16 +466,21 @@ class CIPSocketClient:
 
             if length == 3 and payload == b"\xff\xff\x02":
                 _logger.error(f"! The specified IPID (0x{ipid_string}) does not exist")
+                restartRequired = True
             elif length == 4 and payload == b"\x00\x00\x00\x1f":
                 _logger.debug(f"  Registered IPID 0x{ipid_string}")
                 self.tx_queue.put(b"\x05\x00\x05\x00\x00\x02\x03\x00")
             else:
                 _logger.error(f"! Error registering IPID 0x{ipid_string}")
-                # this is a problem - restart connection
+                restartRequired = True
         elif ciptype == 0x03:
             # control system disconnect
             _logger.debug("! Control system disconnect")
-            # at this point we will have to restart the connection
+            restartRequired = True
         else:
             # unexpected packet
             _logger.debug("! We don't know what to do with this packet")
+
+        if restartRequired:
+            with self.restart_lock:
+                self.restart_connection = True
